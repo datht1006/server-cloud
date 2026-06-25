@@ -1,0 +1,614 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Client V4 Gemini Explorer</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;font-family:Segoe UI,Arial,sans-serif;height:100vh;overflow:hidden;background:#f3f4f6;color:#111827}
+.header{height:60px;background:#111827;color:#fff;display:flex;align-items:center;padding:0 15px;gap:12px}
+.header b{white-space:nowrap}.header input{flex:1;padding:10px 12px;border-radius:8px;border:none;outline:none}
+.layout{display:flex;height:calc(100vh - 60px)}
+.sidebar{width:380px;background:#1f2937;color:#fff;overflow:auto;padding:10px}
+.main{flex:1;display:flex;flex-direction:column;min-width:0}
+.toolbar{padding:10px;background:#fff;border-bottom:1px solid #ddd;display:flex;gap:8px;align-items:center}
+.toolbar button{padding:8px 12px;border:1px solid #d1d5db;background:#fff;border-radius:7px;cursor:pointer}
+.toolbar button:hover{background:#f3f4f6}
+.breadcrumb{padding:10px;background:#fafafa;border-bottom:1px solid #ddd;font-size:13px;color:#374151;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.content{flex:1;display:grid;grid-template-columns:1fr 450px;min-height:0}
+.files{overflow:auto;background:#fff}.preview{border-left:1px solid #ddd;background:#fff;min-width:0}
+#viewer{width:100%;height:100%;border:none}
+.tree-node{margin-left:12px}.tree-item{padding:6px 8px;cursor:pointer;border-radius:6px;user-select:none;font-size:14px}
+.tree-item:hover{background:#374151}.tree-item.active{background:#2563eb}
+.explorer-table{width:100%;border-collapse:collapse;background:white;font-size:14px}
+.explorer-table thead{position:sticky;top:0;background:#f9fafb;z-index:2}
+.explorer-table th,.explorer-table td{padding:10px;border-bottom:1px solid #e5e7eb;text-align:left}
+.explorer-table th{color:#4b5563;font-weight:600}.explorer-table tr:hover{background:#f3f4f6;cursor:pointer}
+.name-cell{max-width:520px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.size-cell{width:120px;font-family:Consolas,monospace;color:#4b5563}.type-cell{width:120px;color:#4b5563}
+.empty{padding:30px;color:#6b7280}
+#contextMenu{position:fixed;display:none;background:white;border:1px solid #d1d5db;box-shadow:0 10px 25px rgba(0,0,0,.15);border-radius:8px;min-width:170px;overflow:hidden;z-index:9999}
+#contextMenu div{padding:10px 13px;cursor:pointer;font-size:14px}#contextMenu div:hover{background:#f3f4f6}
+.status{margin-left:auto;color:#6b7280;font-size:13px}
+
+/* AI result modal */
+.modal-backdrop{
+    position:fixed;inset:0;background:rgba(17,24,39,.55);
+    display:none;align-items:center;justify-content:center;z-index:10000;
+}
+.modal{
+    width:min(980px,92vw);max-height:86vh;background:#fff;border-radius:14px;
+    box-shadow:0 25px 70px rgba(0,0,0,.35);display:flex;flex-direction:column;overflow:hidden;
+}
+.modal-header{
+    padding:14px 18px;background:#111827;color:#fff;
+    display:flex;align-items:center;justify-content:space-between;gap:10px;
+}
+.modal-header button{
+    border:none;background:#374151;color:#fff;border-radius:8px;padding:7px 10px;cursor:pointer;
+}
+.modal-body{padding:16px;overflow:auto}
+.ai-card{
+    border:1px solid #e5e7eb;border-radius:12px;padding:14px;margin-bottom:12px;background:#fafafa;
+}
+.ai-title{font-weight:700;margin-bottom:8px}
+.ai-grid{display:grid;grid-template-columns:160px 1fr;gap:8px;font-size:14px}
+.ai-label{color:#6b7280}
+.ai-value{font-family:Segoe UI,Arial,sans-serif;word-break:break-word}
+.badge{display:inline-block;padding:3px 8px;border-radius:999px;font-size:12px;font-weight:600}
+.ok{background:#dcfce7;color:#166534}.warn{background:#fef3c7;color:#92400e}.bad{background:#fee2e2;color:#991b1b}
+.modal-footer{padding:12px 16px;background:#f9fafb;border-top:1px solid #e5e7eb;text-align:right}
+.modal-footer button{padding:8px 12px;border:1px solid #d1d5db;background:#fff;border-radius:8px;cursor:pointer}
+</style>
+</head>
+<body>
+
+<div class="header">
+    <b>☁ Kho tài liệu V4 + Gemini</b>
+    <input id="search" placeholder="Tìm kiếm file...">
+</div>
+
+<div class="layout">
+    <div class="sidebar">
+        <div id="folderTree"></div>
+    </div>
+
+    <div class="main">
+        <div class="toolbar">
+            <button onclick="goHome()">🏠 Home</button>
+            <button onclick="uploadFile()">⬆ Upload</button>
+            <button onclick="uploadAuto()">🤖 AI Upload</button>
+            <button onclick="createFolder()">📁 New Folder</button>
+            <button onclick="deleteItem()">🗑 Delete</button>
+            <button onclick="refreshData()">🔄 Refresh</button>
+            <span class="status" id="status">Ready</span>
+        </div>
+
+        <div id="breadcrumb" class="breadcrumb">Root</div>
+
+        <div class="content">
+            <div class="files">
+                <table class="explorer-table">
+                    <thead>
+                        <tr>
+                            <th>Tên</th>
+                            <th class="type-cell">Loại</th>
+                            <th class="size-cell">Kích thước</th>
+                        </tr>
+                    </thead>
+                    <tbody id="fileBody"></tbody>
+                </table>
+                <div id="emptyBox" class="empty" style="display:none">Thư mục trống</div>
+            </div>
+
+            <div class="preview">
+                <iframe id="viewer"></iframe>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div id="contextMenu">
+    <div onclick="previewSelected()">👁 Preview</div>
+    <div onclick="renameFile()">✏ Rename</div>
+    <div onclick="moveFile()">📂 Move</div>
+    <div onclick="deleteItem()">🗑 Delete</div>
+</div>
+
+<div class="modal-backdrop" id="aiModal">
+    <div class="modal">
+        <div class="modal-header">
+            <b>🤖 Kết quả AI Upload</b>
+            <button onclick="closeAiModal()">Đóng</button>
+        </div>
+        <div class="modal-body" id="aiResultBody"></div>
+        <div class="modal-footer">
+            <button onclick="closeAiModal()">OK</button>
+        </div>
+    </div>
+</div>
+
+<script>
+const API = "/api";
+const HOST = "";
+
+let currentPath = "";
+let selectedItem = null;
+
+function setStatus(msg){ document.getElementById("status").innerText = msg; }
+
+function escapeHtml(text){
+    return String(text || "")
+        .replaceAll("&","&amp;")
+        .replaceAll("<","&lt;")
+        .replaceAll(">","&gt;")
+        .replaceAll('"',"&quot;");
+}
+
+async function buildTree(path="", container=null){
+    if(!container){
+        container = document.getElementById("folderTree");
+        container.innerHTML = "";
+    }
+
+    try{
+        const res = await fetch(API + "/folders?path=" + encodeURIComponent(path));
+        const folders = await res.json();
+
+        folders.forEach(folder=>{
+            const wrap = document.createElement("div");
+            wrap.className = "tree-node";
+
+            const row = document.createElement("div");
+            row.className = "tree-item";
+            row.innerHTML = "▶ 📁 " + escapeHtml(folder.name);
+
+            const child = document.createElement("div");
+            child.style.display = "none";
+
+            let loaded = false;
+            let opened = false;
+
+            row.onclick = async (e)=>{
+                e.stopPropagation();
+
+                document.querySelectorAll(".tree-item")
+                    .forEach(x=>x.classList.remove("active"));
+
+                row.classList.add("active");
+                currentPath = folder.path;
+
+                await loadFiles(folder.path);
+
+                if(!loaded){
+                    loaded = true;
+                    await buildTree(folder.path, child);
+                }
+
+                opened = !opened;
+                child.style.display = opened ? "block" : "none";
+                row.innerHTML = (opened ? "▼ 📁 " : "▶ 📁 ") + escapeHtml(folder.name);
+            };
+
+            wrap.appendChild(row);
+            wrap.appendChild(child);
+            container.appendChild(wrap);
+        });
+    }catch(err){
+        console.error(err);
+        setStatus("Lỗi load tree");
+    }
+}
+
+async function loadFiles(path=""){
+    currentPath = path;
+    document.getElementById("breadcrumb").innerText = path || "Root";
+    hideContextMenu();
+
+    try{
+        const res = await fetch(API + "/files?path=" + encodeURIComponent(path));
+        const data = await res.json();
+
+        const body = document.getElementById("fileBody");
+        const emptyBox = document.getElementById("emptyBox");
+
+        body.innerHTML = "";
+
+        const folders = data.folders || [];
+        const files = data.files || [];
+
+        folders.forEach(folder=>{
+            const tr = document.createElement("tr");
+            tr.innerHTML = `
+                <td class="name-cell">📁 ${escapeHtml(folder.name)}</td>
+                <td class="type-cell">Folder</td>
+                <td class="size-cell">-</td>
+            `;
+            tr.onclick = ()=>{
+                currentPath = folder.path;
+                loadFiles(folder.path);
+            };
+            tr.oncontextmenu = (e)=>{
+                e.preventDefault();
+                selectedItem = {type:"folder", name:folder.name, key:folder.path, path:folder.path};
+                showContextMenu(e.pageX, e.pageY);
+            };
+            body.appendChild(tr);
+        });
+
+        files.forEach(file=>{
+            const tr = document.createElement("tr");
+            tr.innerHTML = `
+                <td class="name-cell">📄 ${escapeHtml(file.name)}</td>
+                <td class="type-cell">${getExt(file.name)}</td>
+                <td class="size-cell">${size(file.size || 0)}</td>
+            `;
+            tr.onclick = ()=>{
+                selectedItem = {type:"file", ...file};
+                previewFile(file.url);
+            };
+            tr.oncontextmenu = (e)=>{
+                e.preventDefault();
+                selectedItem = {type:"file", ...file};
+                showContextMenu(e.pageX, e.pageY);
+            };
+            body.appendChild(tr);
+        });
+
+        emptyBox.style.display = (folders.length + files.length) ? "none" : "block";
+        setStatus(`${folders.length} folder, ${files.length} file`);
+
+    }catch(err){
+        console.error(err);
+        setStatus("Lỗi load file");
+    }
+}
+
+function getExt(name){
+    const parts = String(name || "").split(".");
+    if(parts.length < 2) return "File";
+    return parts.pop().toUpperCase();
+}
+
+function size(b){
+    if(b < 1024) return b + " B";
+    if(b < 1024*1024) return (b/1024).toFixed(1) + " KB";
+    if(b < 1024*1024*1024) return (b/1024/1024).toFixed(1) + " MB";
+    return (b/1024/1024/1024).toFixed(1) + " GB";
+}
+
+function previewFile(url){
+    document.getElementById("viewer").src = HOST + url;
+}
+
+function previewSelected(){
+    if(selectedItem && selectedItem.type === "file"){
+        previewFile(selectedItem.url);
+    }
+    hideContextMenu();
+}
+
+function showContextMenu(x,y){
+    const menu = document.getElementById("contextMenu");
+    menu.style.display = "block";
+    menu.style.left = x + "px";
+    menu.style.top = y + "px";
+}
+
+function hideContextMenu(){
+    document.getElementById("contextMenu").style.display = "none";
+}
+
+document.addEventListener("click", hideContextMenu);
+
+async function uploadFile(){
+    const input = document.createElement("input");
+    input.type = "file";
+    input.multiple = true;
+
+    input.onchange = async ()=>{
+        if(!input.files.length) return;
+
+        setStatus("Uploading...");
+
+        for(const file of input.files){
+            const fd = new FormData();
+            fd.append("file", file);
+
+            const uploadUrl = API + "/upload?path=" + encodeURIComponent(currentPath);
+
+            const res = await fetch(uploadUrl, {
+                method:"POST",
+                body:fd
+            });
+
+            const data = await res.json();
+            console.log("Uploaded:", data);
+        }
+
+        await loadFiles(currentPath);
+        await refreshTreeOnly();
+        setStatus("Upload xong");
+    };
+
+    input.click();
+}
+
+async function uploadAuto(){
+    const input = document.createElement("input");
+    input.type = "file";
+    input.multiple = true;
+
+    input.onchange = async ()=>{
+        if(!input.files.length) return;
+
+        setStatus("AI uploading...");
+
+        const results = [];
+
+        for(const file of input.files){
+            const fd = new FormData();
+            fd.append("file", file);
+
+            try{
+                const res = await fetch(API + "/upload/auto", {
+                    method:"POST",
+                    body:fd
+                });
+
+                const data = await res.json();
+                results.push(data);
+                console.log("AI Uploaded:", data);
+            }catch(err){
+                results.push({
+                    success:false,
+                    file_name:file.name,
+                    error:String(err),
+                    needs_review:true
+                });
+            }
+        }
+
+        await refreshData();
+        showAiResults(results);
+        setStatus("AI upload xong");
+    };
+
+    input.click();
+}
+
+function formatDocumentTime(t){
+    if(!t) return "Không rõ";
+
+    const parts = [];
+    if(t.year) parts.push("Năm " + t.year);
+    if(t.month) parts.push("Tháng " + t.month);
+    if(t.quarter) parts.push("Quý " + t.quarter);
+
+    return parts.length ? parts.join(" / ") : "Không rõ";
+}
+
+function showAiResults(results){
+    const body = document.getElementById("aiResultBody");
+    body.innerHTML = "";
+
+    results.forEach((x, index)=>{
+        const check = x.check || {};
+        const time = formatDocumentTime(check.document_time);
+        const review = x.needs_review ? "Cần kiểm tra" : "OK";
+        const badgeClass = x.needs_review ? "warn" : "ok";
+
+        const card = document.createElement("div");
+        card.className = "ai-card";
+
+        card.innerHTML = `
+            <div class="ai-title">
+                ${index + 1}. ${escapeHtml(x.file_name || x.name || "Unknown file")}
+                <span class="badge ${badgeClass}">${review}</span>
+            </div>
+
+            <div class="ai-grid">
+                <div class="ai-label">Trạng thái</div>
+                <div class="ai-value">${x.success ? "Upload thành công" : "Lỗi"}</div>
+
+                <div class="ai-label">Đã đẩy vào</div>
+                <div class="ai-value">${escapeHtml(x.uploaded_to || x.target_folder || "-")}</div>
+
+                <div class="ai-label">Key</div>
+                <div class="ai-value">${escapeHtml(x.key || "-")}</div>
+
+                <div class="ai-label">Folder gốc</div>
+                <div class="ai-value">${escapeHtml(check.base_folder || "-")}</div>
+
+                <div class="ai-label">Thời gian tài liệu</div>
+                <div class="ai-value">${escapeHtml(time)}</div>
+
+                <div class="ai-label">Nguồn thời gian</div>
+                <div class="ai-value">${escapeHtml(check.document_time?.source || "-")}</div>
+
+                <div class="ai-label">Loại tài liệu</div>
+                <div class="ai-value">${escapeHtml(check.document_type || "-")}</div>
+
+                <div class="ai-label">Mã nhận diện</div>
+                <div class="ai-value">${escapeHtml((check.codes || []).join(", ") || "-")}</div>
+
+                <div class="ai-label">Nguồn match</div>
+                <div class="ai-value">${escapeHtml(check.base_source || "-")}</div>
+
+                <div class="ai-label">Lý do</div>
+                <div class="ai-value">${escapeHtml(check.reason || x.error || "-")}</div>
+            </div>
+        `;
+
+        body.appendChild(card);
+    });
+
+    document.getElementById("aiModal").style.display = "flex";
+}
+
+function closeAiModal(){
+    document.getElementById("aiModal").style.display = "none";
+}
+
+async function createFolder(){
+    const name = prompt("Tên thư mục mới:");
+    if(!name) return;
+
+    await fetch(
+        API + "/folder/create?name=" + encodeURIComponent(name) +
+        "&path=" + encodeURIComponent(currentPath),
+        { method:"POST" }
+    );
+
+    await loadFiles(currentPath);
+    await refreshTreeOnly();
+}
+
+async function renameFile(){
+    if(!selectedItem) return;
+
+    if(selectedItem.type !== "file"){
+        alert("Rename folder chưa bật ở bản này.");
+        hideContextMenu();
+        return;
+    }
+
+    const name = prompt("Tên mới:", selectedItem.name);
+    if(!name) return;
+
+    await fetch(
+        API + "/rename?old_key=" + encodeURIComponent(selectedItem.key) +
+        "&new_name=" + encodeURIComponent(name),
+        { method:"POST" }
+    );
+
+    await loadFiles(currentPath);
+    hideContextMenu();
+}
+
+async function moveFile(){
+    if(!selectedItem) return;
+
+    if(selectedItem.type !== "file"){
+        alert("Move folder chưa bật ở bản này.");
+        hideContextMenu();
+        return;
+    }
+
+    const folder = prompt("Folder đích, ví dụ: QT01/ hoặc 1. KHỐI/QT01/");
+    if(!folder) return;
+
+    await fetch(
+        API + "/move?old_key=" + encodeURIComponent(selectedItem.key) +
+        "&new_folder=" + encodeURIComponent(folder),
+        { method:"POST" }
+    );
+
+    await loadFiles(currentPath);
+    await refreshTreeOnly();
+    hideContextMenu();
+}
+
+async function deleteItem(){
+    if(!selectedItem) return;
+
+    if(selectedItem.type === "folder"){
+        if(!confirm("Xóa folder và toàn bộ nội dung: " + selectedItem.name + " ?")) return;
+
+        await fetch(
+            API + "/folder?path=" + encodeURIComponent(selectedItem.path),
+            { method:"DELETE" }
+        );
+
+        await loadFiles(currentPath);
+        await refreshTreeOnly();
+        hideContextMenu();
+        return;
+    }
+
+    if(!confirm("Xóa file: " + selectedItem.name + " ?")) return;
+
+    await fetch(
+        API + "/file?key=" + encodeURIComponent(selectedItem.key),
+        { method:"DELETE" }
+    );
+
+    document.getElementById("viewer").src = "";
+    await loadFiles(currentPath);
+    hideContextMenu();
+}
+
+async function goHome(){
+    currentPath = "";
+    selectedItem = null;
+    document.getElementById("viewer").src = "";
+    document.getElementById("search").value = "";
+    document.querySelectorAll(".tree-item").forEach(x=>x.classList.remove("active"));
+    await loadFiles("");
+}
+
+async function refreshTreeOnly(){
+    await buildTree();
+}
+
+async function refreshData(){
+    await refreshTreeOnly();
+    await loadFiles(currentPath);
+}
+
+document.getElementById("search").addEventListener("keyup", async e=>{
+    const q = e.target.value.trim();
+
+    if(q.length === 0){
+        loadFiles(currentPath);
+        return;
+    }
+
+    if(q.length < 2) return;
+
+    try{
+        const res = await fetch(API + "/search?q=" + encodeURIComponent(q));
+        const files = await res.json();
+
+        const body = document.getElementById("fileBody");
+        const emptyBox = document.getElementById("emptyBox");
+
+        body.innerHTML = "";
+
+        files.forEach(file=>{
+            const tr = document.createElement("tr");
+            tr.innerHTML = `
+                <td class="name-cell">📄 ${escapeHtml(file.name)}</td>
+                <td class="type-cell">${getExt(file.name)}</td>
+                <td class="size-cell">${size(file.size || 0)}</td>
+            `;
+            tr.onclick = ()=>{
+                selectedItem = {type:"file", ...file};
+                previewFile(file.url);
+            };
+            tr.oncontextmenu = (ev)=>{
+                ev.preventDefault();
+                selectedItem = {type:"file", ...file};
+                showContextMenu(ev.pageX, ev.pageY);
+            };
+            body.appendChild(tr);
+        });
+
+        emptyBox.style.display = files.length ? "none" : "block";
+        setStatus(`${files.length} kết quả`);
+    }catch(err){
+        console.error(err);
+        setStatus("Lỗi search");
+    }
+});
+
+async function init(){
+    await buildTree();
+    await loadFiles("");
+}
+
+init();
+</script>
+</body>
+</html>
