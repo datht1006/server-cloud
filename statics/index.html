@@ -15,7 +15,9 @@ body{margin:0;font-family:Segoe UI,Arial,sans-serif;height:100vh;overflow:hidden
 .toolbar{padding:10px;background:#fff;border-bottom:1px solid #ddd;display:flex;gap:8px;align-items:center}
 .toolbar button{padding:8px 12px;border:1px solid #d1d5db;background:#fff;border-radius:7px;cursor:pointer}
 .toolbar button:hover{background:#f3f4f6}
+.toolbar button:disabled{opacity:.45;cursor:not-allowed;background:#f9fafb}
 .breadcrumb{padding:10px;background:#fafafa;border-bottom:1px solid #ddd;font-size:13px;color:#374151;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.breadcrumb span{cursor:pointer}.breadcrumb span:hover{text-decoration:underline;color:#2563eb}
 .content{flex:1;display:grid;grid-template-columns:1fr 450px;min-height:0}
 .files{overflow:auto;background:#fff}.preview{border-left:1px solid #ddd;background:#fff;min-width:0}
 #viewer{width:100%;height:100%;border:none}
@@ -76,6 +78,9 @@ body{margin:0;font-family:Segoe UI,Arial,sans-serif;height:100vh;overflow:hidden
 
     <div class="main">
         <div class="toolbar">
+            <button id="btnBack" onclick="goBack()">⬅ Back</button>
+            <button id="btnForward" onclick="goForward()">➡ Forward</button>
+            <button onclick="goUp()">⬆ Up</button>
             <button onclick="goHome()">🏠 Home</button>
             <button onclick="uploadFile()">⬆ Upload</button>
             <button onclick="uploadAuto()">🤖 AI Upload</button>
@@ -138,6 +143,10 @@ const HOST = API_BASE;
 let currentPath = "";
 let selectedItem = null;
 
+let historyStack = [""];
+let historyIndex = 0;
+let isNavigatingHistory = false;
+
 function setStatus(msg){ document.getElementById("status").innerText = msg; }
 
 function escapeHtml(text){
@@ -147,6 +156,83 @@ function escapeHtml(text){
         .replaceAll(">","&gt;")
         .replaceAll('"',"&quot;");
 }
+
+function normalizePath(path){
+    path = String(path || "").trim();
+    if(path && !path.endsWith("/")) path += "/";
+    return path;
+}
+
+function updateNavButtons(){
+    const back = document.getElementById("btnBack");
+    const forward = document.getElementById("btnForward");
+    if(back) back.disabled = historyIndex <= 0;
+    if(forward) forward.disabled = historyIndex >= historyStack.length - 1;
+}
+
+async function navigate(path){
+    path = normalizePath(path);
+    if(!isNavigatingHistory && historyStack[historyIndex] !== path){
+        historyStack = historyStack.slice(0, historyIndex + 1);
+        historyStack.push(path);
+        historyIndex++;
+    }
+    await loadFiles(path);
+    updateNavButtons();
+}
+
+async function goBack(){
+    if(historyIndex <= 0) return;
+    historyIndex--;
+    isNavigatingHistory = true;
+    await loadFiles(historyStack[historyIndex]);
+    isNavigatingHistory = false;
+    updateNavButtons();
+}
+
+async function goForward(){
+    if(historyIndex >= historyStack.length - 1) return;
+    historyIndex++;
+    isNavigatingHistory = true;
+    await loadFiles(historyStack[historyIndex]);
+    isNavigatingHistory = false;
+    updateNavButtons();
+}
+
+async function goUp(){
+    if(currentPath === "") return;
+    let path = normalizePath(currentPath);
+    if(path.endsWith("/")) path = path.slice(0, -1);
+    const parts = path.split("/").filter(Boolean);
+    parts.pop();
+    await navigate(parts.length ? parts.join("/") + "/" : "");
+}
+
+function renderBreadcrumb(path){
+    const box = document.getElementById("breadcrumb");
+    path = normalizePath(path);
+    box.innerHTML = "";
+
+    const root = document.createElement("span");
+    root.innerText = "🏠 Root";
+    root.onclick = () => navigate("");
+    box.appendChild(root);
+
+    if(!path) return;
+
+    let current = "";
+    path.split("/").filter(Boolean).forEach(part=>{
+        current += part + "/";
+        box.append(" / ");
+
+        const item = document.createElement("span");
+        item.innerText = part;
+        const targetPath = current;
+        item.onclick = () => navigate(targetPath);
+        box.appendChild(item);
+    });
+}
+
 
 async function buildTree(path="", container=null){
     if(!container){
@@ -179,9 +265,8 @@ async function buildTree(path="", container=null){
                     .forEach(x=>x.classList.remove("active"));
 
                 row.classList.add("active");
-                currentPath = folder.path;
 
-                await loadFiles(folder.path);
+                await navigate(folder.path);
 
                 if(!loaded){
                     loaded = true;
@@ -204,8 +289,9 @@ async function buildTree(path="", container=null){
 }
 
 async function loadFiles(path=""){
+    path = normalizePath(path);
     currentPath = path;
-    document.getElementById("breadcrumb").innerText = path || "Root";
+    renderBreadcrumb(path);
     hideContextMenu();
 
     try{
@@ -228,8 +314,10 @@ async function loadFiles(path=""){
                 <td class="size-cell">-</td>
             `;
             tr.onclick = ()=>{
-                currentPath = folder.path;
-                loadFiles(folder.path);
+                selectedItem = {type:"folder", name:folder.name, key:folder.path, path:folder.path};
+            };
+            tr.ondblclick = ()=>{
+                navigate(folder.path);
             };
             tr.oncontextmenu = (e)=>{
                 e.preventDefault();
@@ -542,12 +630,11 @@ async function deleteItem(){
 }
 
 async function goHome(){
-    currentPath = "";
     selectedItem = null;
     document.getElementById("viewer").src = "";
     document.getElementById("search").value = "";
     document.querySelectorAll(".tree-item").forEach(x=>x.classList.remove("active"));
-    await loadFiles("");
+    await navigate("");
 }
 
 async function refreshTreeOnly(){
@@ -563,7 +650,7 @@ document.getElementById("search").addEventListener("keyup", async e=>{
     const q = e.target.value.trim();
 
     if(q.length === 0){
-        loadFiles(currentPath);
+        await loadFiles(currentPath);
         return;
     }
 
@@ -605,9 +692,41 @@ document.getElementById("search").addEventListener("keyup", async e=>{
     }
 });
 
+document.addEventListener("keydown", async (e)=>{
+    const tag = (document.activeElement && document.activeElement.tagName || "").toUpperCase();
+
+    if(tag === "INPUT" || tag === "TEXTAREA") return;
+
+    if(e.altKey && e.key === "ArrowLeft"){
+        e.preventDefault();
+        await goBack();
+        return;
+    }
+
+    if(e.altKey && e.key === "ArrowRight"){
+        e.preventDefault();
+        await goForward();
+        return;
+    }
+
+    if(e.key === "Backspace"){
+        e.preventDefault();
+        await goUp();
+        return;
+    }
+
+    if((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "r"){
+        e.preventDefault();
+        await refreshData();
+        return;
+    }
+});
+
 async function init(){
+    updateNavButtons();
     await buildTree();
     await loadFiles("");
+    updateNavButtons();
 }
 
 init();
