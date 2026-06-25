@@ -130,8 +130,10 @@ body{margin:0;font-family:Segoe UI,Arial,sans-serif;height:100vh;overflow:hidden
 </div>
 
 <script>
-const API = "/api";
-const HOST = "";
+const API_BASE = "https://server-cloud-cd5.onrender.com";
+
+const API = API_BASE + "/api";
+const HOST = API_BASE;
 
 let currentPath = "";
 let selectedItem = null;
